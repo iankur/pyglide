@@ -213,14 +213,22 @@ def caption_to_filename(caption: str) -> str:
     return re.sub(r"[^\w]", "_", caption).lower()[:200]
 
 
-def save_images(batch: th.Tensor, caption: str, subdir: str, prefix: str = "outputs"):
-    scaled = ((batch + 1) * 127.5).round().clamp(0, 255).to(th.uint8).cpu()
-    reshaped = scaled.permute(2, 0, 3, 1).reshape([batch.shape[2], -1, 3])
-    pil_image = Image.fromarray(reshaped.numpy())
-    clean_caption = caption_to_filename(caption)
+def save_images(batch: th.Tensor, caption: str, subdir: str, prefix: str = "outputs", save_each: bool = False):
     directory = os.path.join(prefix, subdir)
     os.makedirs(directory, exist_ok=True)
-    full_path = os.path.join(directory, f"{clean_caption}.png")
-    print(f"Saving image to {full_path}")
-    pil_image.save(full_path)
-    return full_path
+    scaled = ((batch + 1) * 127.5).round().clamp(0, 255).to(th.uint8).cpu()
+    clean_caption = caption_to_filename(caption)
+    print(f"Saving image to {directory}")
+    if not save_each:
+        reshaped = scaled.permute(2, 0, 3, 1).reshape([batch.shape[2], -1, 3])
+        pil_image = Image.fromarray(reshaped.numpy())
+        full_path = os.path.join(directory, f"{clean_caption}.png")
+        pil_image.save(full_path)
+    else:
+        reshaped = scaled.permute(0, 2, 3, 1)
+        for i, arr in enumerate(reshaped):
+            pil_image = Image.fromarray(reshaped[i].numpy())
+            full_path = os.path.join(directory, f"{clean_caption}_{i}.png")
+            pil_image.save(full_path)
+            
+    return directory

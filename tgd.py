@@ -10,7 +10,10 @@ from termcolor import cprint
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--prompt", type=str, help="a caption to visualize", required=True
+        "--prompt", type=str, help="a caption to visualize", required=False
+    )
+    parser.add_argument(
+        "--prompt_file", type=str, help="a file containing path on each line to file containing prompt", required=False
     )
     parser.add_argument(
         "--style_prompt", type=str, help="(experimental) start from this model output when interpolating. useful with laionide-v4", default="", required=False
@@ -78,6 +81,17 @@ def parse_args():
         default='',
         required=False,
     )
+    parser.add_argument(
+        "--sample_method",
+        type=str,
+        help="Sampling method for low resolution generation, either ddim or ddpm for glide model",
+        choice=["ddim", "ddpm"],
+        default="ddim"
+    )
+    parser.add_argument(
+        "--save_each",
+        action="store_true",
+    )
     return parser.parse_args()
 
 
@@ -85,6 +99,7 @@ def parse_args():
 def run():
     args = parse_args()
     prompt = args.prompt
+    prompt_file = args.prompt_file
     style_prompt = args.style_prompt
     batch_size = args.batch_size
     guidance_scale = args.guidance_scale
@@ -98,6 +113,17 @@ def run():
     base_path = args.base_path
     upsample_path = args.upsample_path
     sr = args.sr
+    sample_method = args.sample_method
+
+    assert prompt or prompt_file, "Input either prompt directly or specify file path"
+    if prompt:
+        prompts = [prompt]
+        fns = [prompt]
+    else:
+        fns = open(prompt_file).read().strip().split('\n')
+        prompts = [open(os.path.join(os.path.dirname(prompt_file), fn)).read().strip() for fn in fns]
+        fns = [fn.split('.')[0] for fn in fns]
+
     th.manual_seed(seed)
     cprint(f"Using seed {seed}", "green")
 
@@ -119,59 +145,65 @@ def run():
 
     cprint("Running base GLIDE text2im model.", "white")
     current_time = time.time()
-    low_res_samples = util.run_glide_text2im(
-        model=model,
-        diffusion=diffusion,
-        options=options,
-        prompt=prompt,
-        batch_size=batch_size,
-        guidance_scale=guidance_scale,
-        side_x=base_x,
-        side_y=base_y,
-        device=device,
-        sample_method="plms",
-        style_prompt=style_prompt,
-        cls_guidance_scale=style_guidance_scale
-    )
-
-    elapsed_time = time.time() - current_time
-    cprint(f"Base inference time: {elapsed_time} seconds.", "green")
-
-    output_path = util.save_images(batch=low_res_samples, caption=prompt, subdir="base", prefix=prefix)
-    cprint(f"Base generations saved to {output_path}.", "green")
-
-    sr_base_x = int(base_x * 4.0)
-    sr_base_y = int(base_y * 4.0)
-    print(f"SR base x: {sr_base_x}, SR base y: {sr_base_y}")
-
-    if sr:
-        cprint(
-            f"Upsampling from {base_x}x{base_y} to {sr_base_x}x{sr_base_y}.", "white"
-        )
-        current_time = time.time()
-        hi_res_samples = util.run_glide_text2im(
-            model=model_up,
-            diffusion=diffusion_up,
-            options=options_up,
+    for fn,prompt in zip(fns, prompts):
+        low_res_samples = util.run_glide_text2im(
+            model=model,
+            diffusion=diffusion,
+            options=options,
             prompt=prompt,
             batch_size=batch_size,
-            side_x=sr_base_x,
-            side_y=sr_base_y,
-            device=device,
-            cond_fn=None,
             guidance_scale=guidance_scale,
-            cls_guidance_scale=style_guidance_scale,
-            sample_method="ddim",
-            input_images=low_res_samples.to(device),
-            upsample_temp=upsample_temp,
+            side_x=base_x,
+            side_y=base_y,
+            device=device,
+            sample_method=sample_method,
+            style_prompt=style_prompt,
+            cls_guidance_scale=style_guidance_scale
         )
-        elapsed_time = time.time() - current_time
-        cprint(f"SR Elapsed time: {elapsed_time} seconds.", "green")
 
-        sr_output_path = util.save_images(
-            batch=hi_res_samples, caption=prompt, subdir="sr", prefix=prefix
-        )
-        cprint(f"Check {sr_output_path} for generations.", "green")
+        elapsed_time = time.time() - current_time
+        cprint(f"Base inference time: {elapsed_time} seconds.", "green")
+
+        subdir, caption = "base", prompt
+        if args.save_each:
+            subdir = os.path.join(subdir, fn)
+            caption = fn
+        output_path = util.save_images(batch=low_res_samples, caption=caption, subdir=subdir, prefix=prefix, save_each=args.save_each)
+        cprint(f"Base generations saved to {output_path}.", "green")
+
+        sr_base_x = int(base_x * 4.0)
+        sr_base_y = int(base_y * 4.0)
+        print(f"SR base x: {sr_base_x}, SR base y: {sr_base_y}")
+
+        if sr:
+            cprint(
+                f"Upsampling from {base_x}x{base_y} to {sr_base_x}x{sr_base_y}.", "white"
+            )
+            current_time = time.time()
+            hi_res_samples = util.run_glide_text2im(
+                model=model_up,
+                diffusion=diffusion_up,
+                options=options_up,
+                prompt=prompt,
+                batch_size=batch_size,
+                side_x=sr_base_x,
+                side_y=sr_base_y,
+                device=device,
+                cond_fn=None,
+                guidance_scale=guidance_scale,
+                cls_guidance_scale=style_guidance_scale,
+                sample_method="ddim",
+                input_images=low_res_samples.to(device),
+                upsample_temp=upsample_temp,
+            )
+            elapsed_time = time.time() - current_time
+            cprint(f"SR Elapsed time: {elapsed_time} seconds.", "green")
+
+            subdir = "sr" if not args.save_each else os.path.join("sr", fn)
+            sr_output_path = util.save_images(
+                batch=hi_res_samples, caption=caption, subdir=subdir, prefix=prefix, save_each=args.save_each
+            )
+            cprint(f"Check {sr_output_path} for generations.", "green")
 
 
 if __name__ == "__main__":
