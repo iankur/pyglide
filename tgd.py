@@ -1,5 +1,6 @@
 import argparse
 import time
+import os
 
 import util
 
@@ -85,7 +86,7 @@ def parse_args():
         "--sample_method",
         type=str,
         help="Sampling method for low resolution generation, either ddim or ddpm for glide model",
-        choice=["ddim", "ddpm"],
+        choices=["ddim", "ddpm"],
         default="ddim"
     )
     parser.add_argument(
@@ -120,16 +121,16 @@ def run():
         prompts = [prompt]
         fns = [prompt]
     else:
-        fns = open(prompt_file).read().strip().split('\n')
+        fns = [l.strip().split(' ', 1)[1] for l in open(prompt_file).read().strip().split('\n')[1:]]
         prompts = [open(os.path.join(os.path.dirname(prompt_file), fn)).read().strip() for fn in fns]
-        fns = [fn.split('.')[0] for fn in fns]
+        fns = [os.path.basename(fn).split('.')[0] for fn in fns]
 
     th.manual_seed(seed)
     cprint(f"Using seed {seed}", "green")
 
-    if len(prompt) == 0:
-        cprint("Prompt is empty, exiting.", "red")
-        return
+    # if len(prompt) == 0:
+    #     cprint("Prompt is empty, exiting.", "red")
+    #     return
 
     device = th.device("cuda:0" if th.cuda.is_available() else "cpu")
     cprint(f"Selected device: {device}.", "white")
